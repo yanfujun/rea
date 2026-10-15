@@ -22,6 +22,20 @@ import {
 } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
+
+it("preserves getter expansion limits in semantic graph coverage", () => {
+  const source = getterExpansionSource();
+  const graph = graphFor(source, analyzeJavaScriptSemantics(source));
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      family: "data-flow",
+      reason: "resource-limit",
+      detail: expect.stringMatching(/getter expansion budget exceeded/i),
+    }),
+  );
+  expect(graph.coverage.status).toBe("unknown");
+});
 
 const SHA256 = "a".repeat(64);
 

@@ -15,6 +15,26 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import {
+  SEMANTIC_GETTER_EXPANSION_LIMIT,
+  SemanticGetterExpansionLimitError,
+} from "./javascriptSemanticResourceLimits.js";
+
+interface GetterExpansion {
+  readonly activeGetters: ReadonlyMap<t.Node, number>;
+  readonly budget: { remaining: number };
+}
+
+const createGetterExpansion = (): GetterExpansion => ({
+  activeGetters: new Map(),
+  budget: { remaining: SEMANTIC_GETTER_EXPANSION_LIMIT },
+});
+
+const spendGetterExpansion = (expansion: GetterExpansion): void => {
+  if (expansion.budget.remaining <= 0)
+    throw new SemanticGetterExpansionLimitError();
+  expansion.budget.remaining--;
+};
 
 export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
@@ -229,7 +249,7 @@ export const semanticClassPropertyReferences = (
   lookup: ClassPropertyLookup,
   selection: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
+  expansion: GetterExpansion = createGetterExpansion(),
 ): readonly JavaScriptSemanticObjectReference[] => {
   const root = lookup.owner;
   const receiver = lookup.receiver ?? root;
@@ -250,7 +270,7 @@ export const semanticClassPropertyReferences = (
       state,
       lookup.initializedBefore,
     );
-    possibleResults.push(...fields.references);
+    for (const reference of fields.references) possibleResults.push(reference);
     instanceFields = fields.definiteNames;
     if (propertyName !== null && instanceFields.has(propertyName))
       return possibleResults;
@@ -271,14 +291,13 @@ export const semanticClassPropertyReferences = (
     for (const getter of lookup.fieldsOnly ? [] : descriptors.getters) {
       const key = semanticStaticPropertyKey(getter.key, getter.computed);
       if (key !== null && instanceFields.has(key)) continue;
-      possibleResults.push(
-        ...getterResultReferences(
-          { getter, owner: klass, receiver },
-          path,
-          state,
-          activeGetters,
-        ),
-      );
+      for (const reference of getterResultReferences(
+        { getter, owner: klass, receiver },
+        path,
+        state,
+        expansion,
+      ))
+        possibleResults.push(reference);
     }
     // An exact own descriptor suppresses inherited lookup. Dynamic computed
     // descriptors may or may not match, so retain possible superclass results.
@@ -287,7 +306,8 @@ export const semanticClassPropertyReferences = (
       klass.superClass !== null &&
       klass.superClass !== undefined
     )
-      pending.push(...semanticClassCandidates(klass.superClass, state));
+      for (const base of semanticClassCandidates(klass.superClass, state))
+        pending.push(base);
   }
   return possibleResults;
 };
@@ -472,14 +492,20 @@ const getterResultReferences = (
   invocation: GetterInvocation,
   path: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
+  expansion: GetterExpansion = createGetterExpansion(),
 ): readonly JavaScriptSemanticObjectReference[] => {
   const { getter, owner, receiver = owner } = invocation;
-  const previousLength = activeGetters.get(getter);
+  const previousLength = expansion.activeGetters.get(getter);
   if (previousLength !== undefined && previousLength <= path.length) return [];
   // Repeated receiver reads may revisit a getter while consuming a finite
   // path; recursive getters that preserve or grow that path cannot progress.
-  const active = new Map(activeGetters).set(getter, path.length);
+  // A per-chain guard cannot bound permutations across different getters.
+  // Siblings share this budget, charged before allocating another expansion.
+  spendGetterExpansion(expansion);
+  const active: GetterExpansion = {
+    ...expansion,
+    activeGetters: new Map(expansion.activeGetters).set(getter, path.length),
+  };
   const isStatic = t.isClassMethod(getter) && getter.static;
   interface AliasVisit {
     readonly identity: string;
@@ -508,6 +534,7 @@ const getterResultReferences = (
     const { path: remaining } = current;
     const expression = unwrapJavaScriptExpression(current.node).node;
     const retain = (reference: JavaScriptSemanticObjectReference): void => {
+      spendGetterExpansion(expansion);
       references.push(
         current.escapes ? { ...reference, escapes: true } : reference,
       );
@@ -814,6 +841,7 @@ export const semanticObjectPropertyReferences = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly JavaScriptSemanticObjectReference[] => {
   const [key, ...remaining] = path;
+  const expansion = createGetterExpansion();
   const references: JavaScriptSemanticObjectReference[] = [];
   const overwritten = new Set<string>();
   const dataOverwritten = new Set<string>();
@@ -893,13 +921,13 @@ export const semanticObjectPropertyReferences = (
       continue;
     if (name === null || semanticPropertyPathKeyMatches(key ?? null, name)) {
       if (t.isObjectMethod(property) && property.kind === "get") {
-        references.push(
-          ...getterResultReferences(
-            { getter: property, owner: node },
-            remaining,
-            state,
-          ),
-        );
+        for (const reference of getterResultReferences(
+          { getter: property, owner: node },
+          remaining,
+          state,
+          expansion,
+        ))
+          references.push(reference);
       } else if (t.isObjectMethod(property) && property.kind === "set") {
         // A setter contributes no readable reference. A paired getter is
         // handled independently when it appears earlier in this object.

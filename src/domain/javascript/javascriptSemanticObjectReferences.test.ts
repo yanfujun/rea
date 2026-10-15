@@ -2,7 +2,10 @@ import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
-import { semanticObjectPropertyReferences } from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticClassPropertyReferences,
+  semanticObjectPropertyReferences,
+} from "./javascriptSemanticObjectReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -70,4 +73,27 @@ it("resolves exact keys with source-order overrides, spreads and accessors", () 
   expect(
     spelled(objectAndState(`const o = { 1: "one", 2: "two" };`), 1),
   ).toEqual([['"one"', "[]"]]);
+});
+
+it("retains large instance field reference lists without argument spreading", () => {
+  const count = 600_000;
+  const klass = t.classExpression(
+    null,
+    null,
+    t.classBody(
+      Array.from({ length: count }, (_, index) =>
+        t.classProperty(t.identifier(`field${index}`), t.identifier("shared")),
+      ),
+    ),
+  );
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(t.program([])),
+  );
+  const references = semanticClassPropertyReferences(
+    { owner: klass, kind: "instance", fieldsOnly: true },
+    [null, "value"],
+    state,
+  );
+  expect(references).toHaveLength(count);
+  expect(references[0]).toMatchObject({ path: ["value"] });
 });

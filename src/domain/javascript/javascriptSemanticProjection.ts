@@ -23,6 +23,11 @@ import {
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
+import {
+  semanticResourceLimitReason,
+  semanticResourceLimitUnknown,
+} from "./javascriptSemanticResourceLimits.js";
 import {
   propertyName,
   semanticStaticPropertyKey,
@@ -247,6 +252,7 @@ export const immutableSemanticScopes = (
 /** Evaluate and freeze bindings into deterministic IR order. */
 export const immutableSemanticBindings = (
   state: JavaScriptSemanticAnalysisState,
+  resourceLimit?: JavaScriptSemanticResourceLimit,
 ): JavaScriptSemanticBinding[] =>
   [...state.bindingsById.values()]
     .map((binding) => ({
@@ -256,8 +262,18 @@ export const immutableSemanticBindings = (
       kind: binding.kind,
       mutable: binding.mutable,
       definitions: binding.definitions,
-      value: evaluateSemanticBinding(binding, state),
-      provenance: evaluateSemanticProvenance(binding, state),
+      value:
+        resourceLimit === undefined
+          ? evaluateSemanticBinding(binding, state)
+          : semanticResourceLimitUnknown(resourceLimit),
+      provenance:
+        resourceLimit === undefined
+          ? evaluateSemanticProvenance(binding, state)
+          : {
+              status: "unknown" as const,
+              origins: [] as const,
+              reason: semanticResourceLimitReason(resourceLimit),
+            },
     }))
     .sort((left, right) =>
       compareUnicodeCodePoints(left.bindingId, right.bindingId),

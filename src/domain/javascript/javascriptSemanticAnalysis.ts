@@ -61,7 +61,11 @@ import {
 } from "./javascriptElectronMemberWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
-import { semanticResourceLimitsIn } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticResourceLimitsIn,
+  semanticResourceLimitReason,
+  SemanticGetterExpansionLimitError,
+} from "./javascriptSemanticResourceLimits.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -163,7 +167,26 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   const state = createState(file.program, staticImportResolutionMode);
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexJavaScriptAmbientWritesSteps(file.program, state);
-  yield* collectSemanticMemberMutationsSteps(file.program, state);
+  try {
+    yield* collectSemanticMemberMutationsSteps(file.program, state);
+  } catch (error) {
+    if (!(error instanceof SemanticGetterExpansionLimitError)) throw error;
+    // Uncollected effects can invalidate any value or alias. Retain lexical
+    // identity only; do not project derived facts from partially gathered writes.
+    return {
+      ...failedJavaScriptSemanticIr(),
+      scopes: immutableSemanticScopes(state),
+      bindings: immutableSemanticBindings(state, "getter-expansion"),
+      callables: state.callables,
+      references: yield* collectSemanticReferencesSteps(file.program, state),
+      coverage: semanticCoverage(file.errors.length > 0, ["getter-expansion"]),
+      limitations: [
+        semanticResourceLimitReason("getter-expansion"),
+        "Only lexical identities and references were retained; member effects, values, module links, and derived relations remain unknown.",
+        "No JavaScript was executed.",
+      ],
+    };
+  }
   const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state, commonJsReceivers),

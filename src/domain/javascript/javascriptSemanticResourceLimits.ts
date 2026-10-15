@@ -7,6 +7,8 @@ import type {
 export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 /** Maximum active expression nesting during inert semantic evaluation. */
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
+/** Shared getter visits and retained results per property-reference query. */
+export const SEMANTIC_GETTER_EXPANSION_LIMIT = 256;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 
@@ -17,7 +19,17 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Primitive string-byte budget exceeded (maximum 1048576 estimated JSON bytes).",
   "expression-depth":
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
+  "getter-expansion":
+    "Getter expansion budget exceeded (maximum 256 getter visits and retained results per property-reference query).",
 };
+
+/** Abort incomplete effect collection before it can produce trusted values. */
+export class SemanticGetterExpansionLimitError extends Error {
+  constructor() {
+    super(RESOURCE_LIMIT_REASON["getter-expansion"]);
+    this.name = "SemanticGetterExpansionLimitError";
+  }
+}
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */
 const jsonStringBytesFromLength = (codeUnits: number): number =>
