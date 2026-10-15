@@ -244,27 +244,6 @@ export interface JavaScriptReceiverFacts {
 }
 
 /**
- * Resolve only the lexical receiver identities needed to distinguish browser
- * `window.open` from XHR and global storage `.open` calls, configuration
- * `.get` reads from HTTP client calls, and tRPC client roots (excluding
- * overwritten bindings). This deliberately builds definitions without running
- * semantic value or provenance analysis.
- */
-export const classifyParsedJavaScriptReceivers = (
-  file: ParsedJavaScriptSource,
-): JavaScriptReceiverFacts =>
-  completeSemanticSteps(classifyParsedJavaScriptReceiversSteps(file));
-
-/** Classify receivers while yielding during lexical and AST scans. */
-export function* classifyParsedJavaScriptReceiversSteps(
-  file: ParsedJavaScriptSource,
-): Generator<void, JavaScriptReceiverFacts> {
-  const state = createState(file.program);
-  yield* collectDefinitionsSteps(file.program, state);
-  return yield* classifyDefinitionReceiversSteps(file.program, state);
-}
-
-/**
  * Index bindings and classify receivers from one definitions pass. Receiver
  * facts read the definitions-only phase, so they are classified before the
  * same state is extended with ambient writes.

@@ -276,8 +276,11 @@ RPC client syntax also contributes network endpoint candidates, in both
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
   selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A graphql-tag `loc.source.body` copy is
-  not reported twice. Anonymous operations are not reported.
+  `OperationDefinition` document object. A standalone Source object's `body`
+  remains an operation candidate even when it has `locationOffset` metadata.
+  A graphql-tag `loc.source.body` copy is suppressed only when that source
+  belongs to a recovered document with the same operation. Anonymous operations
+  are not reported.
 
 Literal link options and precompiled document fields follow object property
 order: the final definition owns the key. A later spread, dynamic computed key,

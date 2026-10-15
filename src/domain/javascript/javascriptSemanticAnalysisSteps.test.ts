@@ -5,8 +5,7 @@ import {
   analyzeParsedJavaScriptSemanticsSteps,
   classifyParsedJavaScriptElectronBindings,
   classifyParsedJavaScriptElectronBindingsSteps,
-  classifyParsedJavaScriptReceivers,
-  classifyParsedJavaScriptReceiversSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
@@ -110,15 +109,14 @@ new NativeWindow();
 `;
   const parsed = parseJavaScriptSource(text, "receivers.js");
   if (parsed === null) throw new Error("Expected parsed source");
-  const openSteps = classifyParsedJavaScriptReceiversSteps(parsed);
+  const openSteps = indexJavaScriptBindingsWithReceiversSteps(parsed.program);
   let openStep = openSteps.next();
   expect(openStep.done).toBe(false);
   while (openStep.done !== true) openStep = openSteps.next();
-  expect([...openStep.value.openReceivers]).toEqual([
+  expect([...openStep.value.receivers.openReceivers]).toEqual([
     [text.indexOf('ambient.open("/local")'), "local"],
     [text.indexOf('ambient.open("/global")'), "window"],
   ]);
-  expect(openStep.value).toEqual(classifyParsedJavaScriptReceivers(parsed));
 
   const electronSteps = classifyParsedJavaScriptElectronBindingsSteps(parsed);
   let electronStep = electronSteps.next();

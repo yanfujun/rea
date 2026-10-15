@@ -401,6 +401,107 @@ describe("GraphQL operation recognition", () => {
 });
 
 describe("GraphQL document ownership", () => {
+  it("retains the only operation in a standalone Source object", () => {
+    expect(
+      rpcEndpoints(`const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };`),
+    ).toEqual([
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it("does not deduplicate an unrelated Source against the same operation name", () => {
+    expect(
+      rpcEndpoints(`
+        const source = {
+          body: "query GetUser { user { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const operation = {
+          kind: "OperationDefinition", operation: "query",
+          name: { kind: "Name", value: "GetUser" },
+        };
+      `),
+    ).toEqual([
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it.each(["referenced", "inline"])(
+    "deduplicates a proven %s source reference",
+    (representation) => {
+      const source = `{
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      }`;
+      const document = `const doc = { kind: "Document", definitions: [{
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" },
+      }], loc: { source: ${representation === "referenced" ? "source" : source} } };`;
+      expect(
+        rpcEndpoints(
+          representation === "referenced"
+            ? `const source = ${source};` + document
+            : document,
+        ),
+      ).toEqual([
+        { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+      ]);
+    },
+  );
+
+  it("retains source text that differs from its document operation", () => {
+    const actual = rpcEndpoints(`
+        const source = {
+          body: "query SourceUser { user { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const operation = {
+          kind: "OperationDefinition", operation: "mutation",
+          name: { kind: "Name", value: "UpdateUser" }, loc: { source },
+        };
+      `);
+    expect(actual).toHaveLength(2);
+    expect(actual).toEqual(
+      expect.arrayContaining([
+        { kind: "network", value: "SourceUser", mechanism: "graphql:query" },
+        { kind: "network", value: "UpdateUser", mechanism: "graphql:mutation" },
+      ]),
+    );
+  });
+
+  it("selects only the final known standalone Source body", () => {
+    expect(
+      rpcEndpoints(`const source = {
+        body: "query Old { user { id } }",
+        body: "query Current { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };`),
+    ).toEqual([
+      { kind: "network", value: "Current", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it("does not prove source ownership from an uninitialized reference", () => {
+    const actual = rpcEndpoints(`
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source },
+      };
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+    `);
+    expect(actual).toHaveLength(2);
+    expect(actual.every(({ value }) => value === "GetUser")).toBe(true);
+  });
+});
+
+describe("GraphQL document recognition", () => {
   it("recognizes precompiled GraphQL document objects", () => {
     expect(
       rpcEndpoints(`

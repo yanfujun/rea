@@ -5,6 +5,11 @@ import {
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import { calleeName } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  resolveSemanticBindingState,
+  semanticStableInitializer,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 
 /** One RPC operation or transport URL recovered from client-side syntax. */
 export interface JavaScriptRpcEndpoint {
@@ -12,9 +17,10 @@ export interface JavaScriptRpcEndpoint {
   readonly mechanism: string;
 }
 
-/** Per-source RPC recognition state; feed it every AST node in pre-order. */
+/** Feed every AST node in pre-order, then drain finish() for Source findings. */
 export interface JavaScriptRpcScan {
   inspect(node: t.Node): JavaScriptRpcEndpoint | undefined;
+  finish(): Iterable<JavaScriptRpcEndpoint & { readonly node: t.Node }>;
 }
 
 // tRPC proxies preserve router and procedure names as property names, so they
@@ -155,6 +161,14 @@ const objectStringProperty = (
 const graphqlSourceBodyLiterals = (
   node: t.ObjectExpression,
 ): readonly t.StringLiteral[] | undefined => {
+  const hasLocationOffset = node.properties.some(
+    (property) =>
+      t.isObjectProperty(property) &&
+      semanticStaticPropertyKey(property.key, property.computed) ===
+        "locationOffset",
+  );
+  if (!hasLocationOffset) return undefined;
+
   const bodyStrings = (object: t.ObjectExpression) =>
     object.properties.flatMap((property) =>
       t.isObjectProperty(property) &&
@@ -164,13 +178,6 @@ const graphqlSourceBodyLiterals = (
         : [],
     );
   const bodies = bodyStrings(node);
-  const hasLocationOffset = node.properties.some(
-    (property) =>
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) ===
-        "locationOffset",
-  );
-  if (!hasLocationOffset) return undefined;
 
   // Inline object spreads can own additional body values which the surrounding
   // Source object may select. Include only body-key string literals from those
@@ -281,6 +288,69 @@ export const graphqlOperationFromDocumentNode = (
     : { value, mechanism: `graphql:${type}` };
 };
 
+/** Follow only unchanged lexical objects; uncertainty cannot prove a copy. */
+const graphqlSourceObjectValue = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): t.ObjectExpression | undefined => {
+  if (node === undefined) return undefined;
+  const visited = new Set<t.Node>();
+  while (node !== undefined && !visited.has(node)) {
+    visited.add(node);
+    node = unwrapJavaScriptExpression(node).node;
+    if (t.isObjectExpression(node)) return node;
+    if (!t.isIdentifier(node)) return undefined;
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (
+      binding === undefined ||
+      binding.mutable ||
+      binding.memberWrites.length > 0 ||
+      binding.escapedPaths.length > 0
+    )
+      return undefined;
+    const initializer = semanticStableInitializer(binding, state);
+    if (
+      initializer?.projection.length !== 0 ||
+      initializer.node.end == null ||
+      node.start == null ||
+      initializer.node.end > node.start
+    )
+      return undefined;
+    node = initializer.node;
+  }
+  return undefined;
+};
+
+const graphqlDocumentSource = (
+  node: t.ObjectExpression,
+  state: JavaScriptSemanticAnalysisState,
+): t.ObjectExpression | undefined => {
+  const loc = graphqlSourceObjectValue(objectProperty(node, "loc"), state);
+  return loc === undefined
+    ? undefined
+    : graphqlSourceObjectValue(objectProperty(loc, "source"), state);
+};
+
+const graphqlDocumentOperations = (
+  node: t.ObjectExpression,
+  operation: JavaScriptRpcEndpoint | undefined,
+): readonly JavaScriptRpcEndpoint[] => {
+  if (operation !== undefined) return [operation];
+  if (objectStringProperty(node, "kind") !== "Document") return [];
+  const definitions = objectProperty(node, "definitions");
+  return t.isArrayExpression(definitions)
+    ? definitions.elements.flatMap((definition) => {
+        const recovered = t.isObjectExpression(definition)
+          ? graphqlOperationFromDocumentNode(definition)
+          : undefined;
+        return recovered === undefined ? [] : [recovered];
+      })
+    : [];
+};
+
+const graphqlOperationKey = (operation: JavaScriptRpcEndpoint): string =>
+  `${operation.mechanism}:${operation.value}`;
+
 /** Bundlers use `(0, imported.factory)` to call an import without a receiver. */
 const rpcFactoryName = (callee: t.Node): string => {
   let current = unwrapJavaScriptExpression(callee).node;
@@ -328,14 +398,20 @@ const trpcLinkUrl = (
 export const createJavaScriptRpcScan = (
   source: string,
   clientRoots: ReadonlySet<t.Node>,
+  bindings: JavaScriptSemanticAnalysisState,
 ): JavaScriptRpcScan => {
   let marker: boolean | undefined;
   const hasMarker = (): boolean =>
     (marker ??= TRPC_SOURCE_MARKERS.some((value) => source.includes(value)));
-  // graphql-tag documents retain source text in loc.source.body. Keep each
-  // direct body literal owned by a Source-shaped object out of the independent
-  // string scan, including duplicates that a later property or spread hides.
+  // Body ownership and duplicate proof are different facts. Defer Source
+  // findings until the existing traversal has seen any later document owner.
   const graphqlDocumentSourceBodies = new WeakSet<t.Node>();
+  const copiedOperations = new WeakMap<t.ObjectExpression, Set<string>>();
+  const sourceOperations: {
+    readonly source: t.ObjectExpression;
+    readonly node: t.StringLiteral;
+    readonly operation: JavaScriptRpcEndpoint;
+  }[] = [];
 
   const procedure = (
     node: t.CallExpression | t.OptionalCallExpression,
@@ -365,18 +441,39 @@ export const createJavaScriptRpcScan = (
       : undefined;
   };
 
+  const inspectGraphqlObject = (
+    node: t.ObjectExpression,
+  ): JavaScriptRpcEndpoint | undefined => {
+    const operation = graphqlOperationFromDocumentNode(node);
+    const documentSource = graphqlDocumentSource(node, bindings);
+    if (documentSource !== undefined) {
+      const keys = copiedOperations.get(documentSource) ?? new Set<string>();
+      for (const owned of graphqlDocumentOperations(node, operation))
+        keys.add(graphqlOperationKey(owned));
+      if (keys.size > 0) copiedOperations.set(documentSource, keys);
+    }
+    const bodies = graphqlSourceBodyLiterals(node);
+    if (bodies !== undefined) {
+      for (const body of bodies) graphqlDocumentSourceBodies.add(body);
+      const body = objectProperty(node, "body");
+      const recovered = t.isStringLiteral(body)
+        ? graphqlOperationFromText(body.value)
+        : undefined;
+      if (t.isStringLiteral(body) && recovered !== undefined)
+        sourceOperations.push({
+          source: node,
+          node: body,
+          operation: recovered,
+        });
+    }
+    return operation;
+  };
+
   return {
     inspect: (node) => {
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         return trpcLinkUrl(node) ?? procedure(node);
-      if (t.isObjectExpression(node)) {
-        const bodies = graphqlSourceBodyLiterals(node);
-        if (bodies !== undefined) {
-          for (const body of bodies) graphqlDocumentSourceBodies.add(body);
-          return undefined;
-        }
-        return graphqlOperationFromDocumentNode(node);
-      }
+      if (t.isObjectExpression(node)) return inspectGraphqlObject(node);
       if (t.isStringLiteral(node))
         return graphqlDocumentSourceBodies.has(node)
           ? undefined
@@ -395,6 +492,12 @@ export const createJavaScriptRpcScan = (
         return undefined;
       }
       return undefined;
+    },
+    *finish() {
+      for (const { source, node, operation } of sourceOperations)
+        if (!copiedOperations.get(source)?.has(graphqlOperationKey(operation)))
+          yield { node, ...operation };
+      sourceOperations.length = 0;
     },
   };
 };

@@ -25,6 +25,7 @@ import {
   inspectRouteProperty,
   inspectRoleProperty,
   inspectRpcNode,
+  finishRpcScanSteps,
   indexVitePreloadDependencyTable,
 } from "./javascriptStaticAnalysisCalls.js";
 import {
@@ -95,7 +96,11 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
       vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
       openReceiverFacts: receivers.openReceivers,
       electronBindings: electronIdentity.bindings,
-      rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots),
+      rpcScan: createJavaScriptRpcScan(
+        source,
+        receivers.rpcClientRoots,
+        bindings,
+      ),
     },
     bindings,
   );
@@ -122,6 +127,7 @@ function* traverseStaticSourceSteps(
       return undefined;
     },
   });
+  yield* finishRpcScanSteps(findings);
 }
 
 const finalizeStaticAnalysis = (
