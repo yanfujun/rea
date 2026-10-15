@@ -817,6 +817,29 @@ Native IDA MCP verification uses `"protocol": "native"` with an already-running 
 
 The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/main/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
 
+## Kuna lane
+
+`npm run verify:kuna` requires a caller-supplied `kuna` in `REA_KUNA_COMMAND`
+and a host C compiler (`REA_CC`, default `cc`) with `strip` and `nm`. It builds a
+source-owned fixture with symbols and stripped, then verifies through MCP that
+the first cold answer comes from a single-function run, assembly waits for and
+serves from the project export, later pseudocode reads the recorded export span,
+a fresh server reuses the export without rebuilding it, staging is empty after
+a completed export, and no owned process survives. Pass
+`--targets DIR --functions a,b` to add caller-built binaries laid out as
+`DIR/<flavor>/<name>` beside `<name>.stripped`; addresses come from the
+symbol-bearing build. `--compare-ghidra` with `GHIDRA_INSTALL_DIR` runs those
+caller-built functions through Ghidra (it refuses to run without `--targets` and
+`--functions`) and reports latency, sampled process-tree CPU and peak
+memory, response size, and goto and warning-marker counts. These counts are not
+a correctness judgement. `--report PATH` writes the JSON report.
+
+The first matrix run used Kuna 1.833 and Ghidra 12.1.4 with JDK 21 on macOS
+arm64. It covered zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
+3.54.0 shell, built at `-O2` for ELF x86-64, ELF AArch64, Mach-O arm64 and
+Mach-O x86-64, each with symbols and stripped. No Linux host run, Windows, PE or
+universal Mach-O coverage is claimed.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
