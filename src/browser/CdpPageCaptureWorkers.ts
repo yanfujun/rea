@@ -1,10 +1,11 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import {
+  admittedRecords,
+  admitRecords,
   allowedSanitizedUrl,
   isHttpUrl,
   recordValue,
-  recordsValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
@@ -31,7 +32,19 @@ export const captureWorkers = async (
   );
   const items: WebPageInspection["workers"] = [];
   if (result === undefined) completeness.unavailable("workers");
-  for (const target of recordsValue(recordValue(result)?.targetInfos)) {
+  const admittedTargets = admitRecords(recordValue(result)?.targetInfos);
+  // An answer without its target inventory is not an empty one; treating it as
+  // empty reports "no workers" where the producer never answered.
+  if (result !== undefined && admittedTargets === undefined) {
+    completeness.unavailable("workers");
+    return [];
+  }
+  for (const entry of admittedTargets ?? []) {
+    const target = recordValue(entry);
+    if (target === undefined) {
+      completeness.exclude("workers", "invalid_protocol_value");
+      continue;
+    }
     const type = cdpStringValue(target.type) ?? "";
     const url = allowedSanitizedUrl(target.url, allowedOrigins);
     const relatedToPage =

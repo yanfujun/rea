@@ -1,10 +1,11 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
+  admittedRecords,
+  admitRecords,
   allowedSanitizedUrl,
   numberValue,
   recordValue,
-  recordsValue,
   requiredRecord,
   cdpStringValue,
   type UnknownRecord,
@@ -455,6 +456,7 @@ export const captureAccessibility = (
   options: {
     readonly includeText: boolean;
     readonly unavailable?: boolean;
+    readonly completeness?: CdpCaptureCompleteness;
   },
 ): {
   readonly total: number;
@@ -462,9 +464,29 @@ export const captureAccessibility = (
   readonly textCapture: WebPageInspection["accessibility"]["text_capture"];
   readonly treeIncomplete: boolean;
 } => {
-  const all = results.flatMap((result) =>
-    recordsValue(requiredRecord(result).nodes),
-  );
+  const all = results.flatMap((result) => {
+    const admitted = admitRecords(requiredRecord(result).nodes);
+    // A command that answered without its node inventory is not an empty tree.
+    if (admitted === undefined) {
+      options.completeness?.exclude(
+        "accessibility",
+        "invalid_protocol_value",
+        null,
+      );
+      return [];
+    }
+    return admitted.flatMap((entry) => {
+      const node = recordValue(entry);
+      if (node === undefined) {
+        options.completeness?.exclude(
+          "accessibility",
+          "invalid_protocol_value",
+        );
+        return [];
+      }
+      return [node];
+    });
+  });
   const nodeIds = new Set(
     all.flatMap((node) => {
       const nodeId = cdpStringValue(node.nodeId);
@@ -552,7 +574,7 @@ const accessibilityStates = (
   value: unknown,
 ): WebPageInspection["accessibility"]["nodes"][number]["states"] => {
   const states = new Map<string, boolean | number | string>();
-  for (const property of recordsValue(value)) {
+  for (const property of admittedRecords(value)) {
     const name = cdpStringValue(property.name);
     if (name === undefined || !ACCESSIBILITY_STATE_NAMES.has(name)) continue;
     const raw = recordValue(property.value)?.value;

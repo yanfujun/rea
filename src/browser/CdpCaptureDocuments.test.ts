@@ -298,7 +298,7 @@ describe("CDP frame capture", () => {
   });
 });
 
-describe("CDP accessibility capture", () => {
+describe("CDP accessibility text approval", () => {
   it("retains full approved accessibility text", () => {
     const capture = captureAccessibility(
       [
@@ -359,6 +359,121 @@ describe("CDP accessibility capture", () => {
       status: "not_approved",
       retained_bytes: 0,
       excluded_fields: 2,
+    });
+  });
+});
+
+describe("CDP accessibility inventory admission", () => {
+  it("reports an empty node inventory as a complete empty tree", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility([{ nodes: [] }], {
+      includeText: true,
+      completeness,
+    });
+
+    expect(capture.total).toBe(0);
+    expect(capture.nodes).toEqual([]);
+    expect(completeness.snapshot()).toMatchObject({
+      status: "complete_within_window",
+      unavailable_sections: [],
+      excluded: [],
+    });
+  });
+
+  it("reports a frame that answered without its node inventory", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility([{ nodes: undefined }], {
+      includeText: true,
+      completeness,
+    });
+
+    expect(capture.total).toBe(0);
+    expect(capture.nodes).toEqual([]);
+    expect(completeness.snapshot()).toMatchObject({
+      unavailable_sections: ["accessibility"],
+      excluded: [
+        {
+          section: "accessibility",
+          reason: "invalid_protocol_value",
+          count: null,
+        },
+      ],
+    });
+    expect(completeness.snapshot().conditions).toContain("attach_limited");
+  });
+
+  it("reports a non-array node inventory rather than an empty tree", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility([{ nodes: { length: 3 } }], {
+      includeText: true,
+      completeness,
+    });
+
+    expect(capture.total).toBe(0);
+    expect(completeness.snapshot().unavailable_sections).toContain(
+      "accessibility",
+    );
+  });
+
+  it("reports a null node entry rather than dropping it silently", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility([{ nodes: [null] }], {
+      includeText: true,
+      completeness,
+    });
+
+    expect(capture.total).toBe(0);
+    expect(completeness.snapshot()).toMatchObject({
+      unavailable_sections: ["accessibility"],
+      excluded: [
+        {
+          section: "accessibility",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+      ],
+    });
+  });
+
+  it("retains valid nodes beside a malformed entry and counts the omission", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            null,
+            { nodeId: "node-1", role: { value: "button" } },
+            "not-a-record",
+          ],
+        },
+      ],
+      { includeText: true, completeness },
+    );
+
+    expect(capture.total).toBe(1);
+    expect(capture.nodes[0]).toMatchObject({
+      node_id: "node-1",
+      role: "button",
+    });
+    expect(completeness.snapshot().excluded).toContainEqual({
+      section: "accessibility",
+      reason: "invalid_protocol_value",
+      count: 2,
+    });
+  });
+
+  it("distinguishes a malformed frame from a legitimately empty sibling", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility(
+      [{ nodes: [] }, { nodes: undefined }],
+      { includeText: true, completeness },
+    );
+
+    expect(capture.total).toBe(0);
+    expect(completeness.snapshot().excluded).toContainEqual({
+      section: "accessibility",
+      reason: "invalid_protocol_value",
+      count: null,
     });
   });
 });

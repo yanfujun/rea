@@ -2,7 +2,7 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
+  admittedRecords,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -27,7 +27,7 @@ export const isMainFrameNavigation = (
 
 export const firstCallFrame = (
   value: UnknownRecord | undefined,
-): UnknownRecord | undefined => recordsValue(value?.callFrames)[0];
+): UnknownRecord | undefined => admittedRecords(value?.callFrames)[0];
 
 export const initiatorLocation = (
   initiator: UnknownRecord | undefined,

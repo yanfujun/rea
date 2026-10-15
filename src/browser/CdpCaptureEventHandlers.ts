@@ -7,7 +7,7 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
+  admittedRecords,
   scriptMetadataValues,
   cdpStringValue,
   type UnknownRecord,
@@ -451,7 +451,7 @@ export const handleConsoleAPICalled = (
     );
     return;
   }
-  const arguments_ = recordsValue(params.args);
+  const arguments_ = admittedRecords(params.args);
   state.console.push({
     type: cdpStringValue(params.type) ?? "unknown",
     timestamp: numberValue(params.timestamp) ?? 0,

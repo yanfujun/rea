@@ -11,7 +11,7 @@ import {
 import {
   numberValue,
   recordValue,
-  recordsValue,
+  admittedRecords,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 
@@ -63,7 +63,7 @@ export const captureStorage = async (
       )
     : undefined;
   const cacheField = recordValue(cacheRaw)?.caches;
-  const caches = capturedCaches(recordsValue(cacheField));
+  const caches = capturedCaches(admittedRecords(cacheField));
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
         context,

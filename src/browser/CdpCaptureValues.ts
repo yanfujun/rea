@@ -12,13 +12,24 @@ const isRecord = (value: unknown): value is UnknownRecord =>
 export const recordValue = (value: unknown): UnknownRecord | undefined =>
   isRecord(value) ? value : undefined;
 
-export const recordsValue = (value: unknown): readonly UnknownRecord[] =>
-  Array.isArray(value)
-    ? value.flatMap((item) => {
-        const record = recordValue(item);
-        return record === undefined ? [] : [record];
-      })
-    : [];
+/**
+ * Admit a producer-supplied array. An absent or non-array field stays unknown
+ * so the caller can account for it instead of reading it as an empty
+ * inventory; only a present array carries producer evidence.
+ */
+export const admitRecords = (value: unknown): readonly unknown[] | undefined =>
+  Array.isArray(value) ? value : undefined;
+
+/**
+ * Records admitted from a producer array. Malformed entries are dropped
+ * without a count, so a caller that must account for what was omitted uses
+ * admitRecords and recordValue per entry instead.
+ */
+export const admittedRecords = (value: unknown): readonly UnknownRecord[] =>
+  (admitRecords(value) ?? []).flatMap((item) => {
+    const record = recordValue(item);
+    return record === undefined ? [] : [record];
+  });
 
 export const cdpStringValue = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;

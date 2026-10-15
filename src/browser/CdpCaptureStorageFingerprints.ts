@@ -9,7 +9,7 @@ import { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
   recordValue,
-  recordsValue,
+  admittedRecords,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 
@@ -131,7 +131,7 @@ const addCookies = async (
     run.state.complete = false;
     return;
   }
-  const cookies = recordsValue(cookieValues);
+  const cookies = admittedRecords(cookieValues);
   if (cookies.length !== cookieValues.length) run.state.complete = false;
   for (const cookie of cookies) {
     const name = cdpStringValue(cookie.name);
@@ -186,7 +186,7 @@ const addIndexedDb = async (
       run.state.complete = false;
       continue;
     }
-    const stores = recordsValue(database.objectStores);
+    const stores = admittedRecords(database.objectStores);
     if (stores.length !== database.objectStores.length)
       run.state.complete = false;
     addFingerprint(run.state, {
@@ -216,7 +216,7 @@ const indexedDbStoreSchema = (store: Readonly<Record<string, unknown>>) => ({
   name: cdpStringValue(store.name) ?? null,
   key_path: stableValue(store.keyPath),
   auto_increment: store.autoIncrement === true,
-  indexes: recordsValue(store.indexes).map((index) => ({
+  indexes: admittedRecords(store.indexes).map((index) => ({
     name: cdpStringValue(index.name) ?? null,
     key_path: stableValue(index.keyPath),
     unique: index.unique === true,
@@ -233,8 +233,8 @@ const indexedDbSchemaComplete = (
       indexedDbKeyPathComplete(store.keyPath) &&
       typeof store.autoIncrement === "boolean" &&
       Array.isArray(store.indexes) &&
-      recordsValue(store.indexes).length === store.indexes.length &&
-      recordsValue(store.indexes).every(
+      admittedRecords(store.indexes).length === store.indexes.length &&
+      admittedRecords(store.indexes).every(
         (index) =>
           cdpStringValue(index.name) !== undefined &&
           indexedDbKeyPathComplete(index.keyPath) &&
@@ -295,7 +295,7 @@ const addIndexedDbRecords = async (
       run.state.complete = false;
       return;
     }
-    const entries = recordsValue(result.objectStoreDataEntries);
+    const entries = admittedRecords(result.objectStoreDataEntries);
     if (entries.length !== result.objectStoreDataEntries.length)
       run.state.complete = false;
     for (const entry of entries) {
@@ -360,7 +360,7 @@ const addCaches = async (
         run.state.complete = false;
         break;
       }
-      const entries = recordsValue(result.cacheDataEntries);
+      const entries = admittedRecords(result.cacheDataEntries);
       if (entries.length !== result.cacheDataEntries.length)
         run.state.complete = false;
       for (const entry of entries) await addCacheEntry(run, cache, entry);
@@ -393,7 +393,7 @@ const addCacheEntry = async (
     run.state.complete = false;
     return;
   }
-  const headerRecords = recordsValue(entry.requestHeaders);
+  const headerRecords = admittedRecords(entry.requestHeaders);
   const requestHeaders = headerRecords.flatMap((header) => {
     const name = cdpStringValue(header.name);
     const value = cdpStringValue(header.value);

@@ -20,7 +20,7 @@ import {
   delayWithCancellation,
   numberValue,
   recordValue,
-  recordsValue,
+  admittedRecords,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -501,7 +501,7 @@ const registrationSource = (
   stack: UnknownRecord | undefined,
   allowedOrigins: ReadonlySet<string>,
 ): WebMcpDiscovery["tools"]["items"][number]["registration_source"] => {
-  const frame = recordsValue(stack?.callFrames)[0];
+  const frame = admittedRecords(stack?.callFrames)[0];
   const url = allowedSanitizedUrl(frame?.url, allowedOrigins);
   return frame === undefined || url === undefined
     ? null

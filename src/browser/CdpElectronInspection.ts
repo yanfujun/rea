@@ -9,10 +9,10 @@ import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
+  admitRecords,
   delayWithCancellation,
   numberValue,
   recordValue,
-  recordsValue,
   requiredRecord,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
@@ -26,7 +26,7 @@ import { captureElectronWorkers } from "./CdpElectronWorkers.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
-interface ElectronContext {
+export interface ElectronContext {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
@@ -263,7 +263,7 @@ export const captureFrames = async (
   return frames;
 };
 
-const captureResources = async (
+export const captureResources = async (
   context: ElectronContext,
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["resources"]> => {
@@ -276,13 +276,23 @@ const captureResources = async (
   const root = recordValue(requiredRecord(result).frameTree);
   if (root === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const pending = [root];
   const resources: ElectronPageInspection["resources"] = [];
   const seen = new Set<string>();
-  while (pending.length > 0) {
-    const tree = pending.shift();
-    if (tree === undefined) break;
-    for (const resource of recordsValue(tree.resources)) {
+  for (const tree of walkFrameTrees(root, (omittedCount) =>
+    completeness.exclude("resources", "invalid_protocol_value", omittedCount),
+  )) {
+    const admitted = admitRecords(tree.resources);
+    // A frame that answered without its resource inventory is not an empty one.
+    if (admitted === undefined) {
+      completeness.exclude("resources", "invalid_protocol_value", null);
+      continue;
+    }
+    for (const entry of admitted) {
+      const resource = recordValue(entry);
+      if (resource === undefined) {
+        completeness.exclude("resources", "invalid_protocol_value");
+        continue;
+      }
       const path = await authorizedElectronFile(
         cdpStringValue(resource.url) ?? "",
       );
@@ -307,14 +317,13 @@ const captureResources = async (
         ...item,
       });
     }
-    pending.push(...recordsValue(tree.childFrames));
   }
   return resources.sort((left, right) =>
     compareUnicodeCodePoints(left.resource_key, right.resource_key),
   );
 };
 
-const captureDom = async (
+export const captureDom = async (
   context: ElectronContext,
   completeness: CdpCaptureCompleteness,
 ): Promise<ElectronPageInspection["dom"]> => {
@@ -326,13 +335,27 @@ const captureDom = async (
       context.signal,
     ),
   );
-  const strings = Array.isArray(result.strings)
-    ? result.strings.map((value) => (typeof value === "string" ? value : ""))
-    : [];
+  const strings = admitRecords(result.strings);
+  const documents = admitRecords(result.documents);
+  // A snapshot without its string table cannot name any node, attribute, or
+  // document URL; resolving those indices against an absent table would
+  // fabricate empty names and misattribute every document as out of scope.
+  if (strings === undefined || documents === undefined) {
+    completeness.exclude("dom", "invalid_protocol_value", null);
+    return { total_nodes: 0, nodes: [] };
+  }
+  const resolvedStrings = strings.map((value) =>
+    typeof value === "string" ? value : "",
+  );
   const nodes: ElectronPageInspection["dom"]["nodes"] = [];
   let total = 0;
-  for (const document of recordsValue(result.documents)) {
-    const documentUrl = stringAt(strings, document.documentURL);
+  for (const entry of documents) {
+    const document = recordValue(entry);
+    if (document === undefined) {
+      completeness.exclude("dom", "invalid_protocol_value");
+      continue;
+    }
+    const documentUrl = stringAt(resolvedStrings, document.documentURL);
     if ((await authorizedElectronFile(documentUrl)) === undefined) {
       completeness.exclude("dom", "out_of_target_scope");
       continue;
@@ -352,13 +375,13 @@ const captureDom = async (
         index: nodes.length,
         parent_index: parent < 0 ? -1 : baseIndex + parent,
         node_type: integer(nodeTypes[index], 0),
-        node_name: stringAt(strings, nodeNames[index]),
+        node_name: stringAt(resolvedStrings, nodeNames[index]),
         node_value_length: Buffer.byteLength(
-          stringAt(strings, nodeValues[index]),
+          stringAt(resolvedStrings, nodeValues[index]),
         ),
         attribute_names: attributeIndexes
           .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
-          .map((value) => stringAt(strings, value)),
+          .map((value) => stringAt(resolvedStrings, value)),
       });
     }
   }

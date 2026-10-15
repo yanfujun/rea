@@ -5,8 +5,8 @@ import type {
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
+  admitRecords,
   recordValue,
-  recordsValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -39,7 +39,19 @@ export const captureElectronWorkers = async (input: {
     return [];
   }
   const workers: ElectronPageInspection["workers"] = [];
-  for (const target of recordsValue(recordValue(result)?.targetInfos)) {
+  const admittedTargets = admitRecords(recordValue(result)?.targetInfos);
+  // An answer without its target inventory is not an empty one; treating it as
+  // empty reports "no local workers" where the producer never answered.
+  if (admittedTargets === undefined) {
+    input.completeness.unavailable("workers");
+    return [];
+  }
+  for (const entry of admittedTargets) {
+    const target = recordValue(entry);
+    if (target === undefined) {
+      input.completeness.exclude("workers", "invalid_protocol_value");
+      continue;
+    }
     const type = cdpStringValue(target.type) ?? "";
     if (!type.includes("worker")) continue;
     const openerTargetId = boundedTargetField(target.openerId);

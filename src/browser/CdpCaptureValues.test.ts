@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { delayWithCancellation } from "./CdpCaptureValues.js";
+import {
+  admitRecords,
+  admittedRecords,
+  delayWithCancellation,
+} from "./CdpCaptureValues.js";
 
 describe("cancellable browser observation delays", () => {
   afterEach(() => vi.useRealTimers());
@@ -23,5 +27,28 @@ describe("cancellable browser observation delays", () => {
     await vi.advanceTimersByTimeAsync(1);
     await waiting;
     expect(completed).toBe(true);
+  });
+});
+
+describe("producer array admission", () => {
+  it("keeps an absent field distinct from a present empty array", () => {
+    expect(admitRecords(undefined)).toBeUndefined();
+    expect(admitRecords([])).toEqual([]);
+    expect(admitRecords("not-an-array")).toBeUndefined();
+    expect(admitRecords(null)).toBeUndefined();
+  });
+
+  it("retains every present entry so the caller can account for malformed ones", () => {
+    const present = [null, { id: "kept" }, "malformed"];
+    expect(admitRecords(present)).toEqual(present);
+    expect(admitRecords(present)).toHaveLength(3);
+  });
+
+  it("filters admitted entries to records for callers that need no ledger", () => {
+    expect(admittedRecords([null, { id: "kept" }, "malformed"])).toEqual([
+      { id: "kept" },
+    ]);
+    expect(admittedRecords(undefined)).toEqual([]);
+    expect(admittedRecords([1, 2])).toEqual([]);
   });
 });
