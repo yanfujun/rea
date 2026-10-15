@@ -324,3 +324,25 @@ describe("graphs transferred to their sealing steps", () => {
     ).toEqual(issuesFrom(() => createJavaScriptApplicationGraph(stale)));
   });
 });
+
+describe("skipped_javascript_files backward compatibility", () => {
+  it("reads saved evidence that predates the skipped counter as zero", () => {
+    const legacy = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = legacy.statistics as Record<string, unknown>;
+    delete statistics.skipped_javascript_files;
+    const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
+    expect(result.statistics.skipped_javascript_files).toBe(0);
+  });
+
+  it("preserves an explicit skipped count in new evidence", () => {
+    const current = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = current.statistics as Record<string, unknown>;
+    statistics.skipped_javascript_files = 3;
+    const result = javascriptApplicationAnalysisResultSchema.parse(current);
+    expect(result.statistics.skipped_javascript_files).toBe(3);
+  });
+});
