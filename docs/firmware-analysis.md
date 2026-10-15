@@ -59,6 +59,27 @@ rea extract-firmware /path/to/firmware.bin /path/to/selected-output \
   --offset 64 --length 4096 --max-depth 3
 ```
 
+### Readiness diagnostics
+
+Run `rea doctor --provider binwalk --json` or
+`rea doctor --provider unblob --json` to require just the selected firmware
+integration; absent native analysis engines remain informational in that scope.
+An unscoped `rea doctor --json` also lists both optional firmware integrations.
+
+Doctor checks Linux support, absolute readable executable paths, the existing
+util-linux `prlimit` selection (default `/usr/bin/prlimit`), a procps-compatible
+`ps` on REA's `PATH`, and the tool's reported version through the same release
+admission rules as analysis. Compatible patch releases are explicitly labeled
+as unverified. Unblob's `--show-external-dependencies` report lists installed
+and missing extractors; missing extractors make its readiness check unhealthy,
+although selected formats may still extract with partial coverage. Unrecognized
+reports remain unknown rather than being treated as successful checks.
+
+These bounded probes inspect only the caller-supplied tools and host prerequisites;
+they do not load firmware, extract files, install dependencies or update agent
+registrations. Tool startup failure, timeout or incomplete process cleanup is
+reported. Readiness is not proof that a particular target can be analyzed.
+
 The corresponding MCP tools accept the same intent:
 
 ```json

@@ -13,6 +13,18 @@ const it = test.skipIf(process.platform === "win32");
 
 it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");
+  expect(DOCTOR_PROVIDER_IDS).toContain("binwalk");
+  expect(DOCTOR_PROVIDER_IDS).toContain("unblob");
+});
+
+it("keeps firmware diagnostics out of setup's engine selection", async () => {
+  const host = createSystemDoctorHost({}, { firmware: false });
+  try {
+    const inspections = await host.providerInspections?.();
+    expect(inspections?.map(({ id }) => id)).toEqual(["ghidra", "ida", "jadx"]);
+  } finally {
+    await host.close?.();
+  }
 });
 
 it("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {
