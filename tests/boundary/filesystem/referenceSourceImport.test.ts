@@ -88,11 +88,37 @@ describe("reference source import projections", () => {
   });
 });
 
+it.skipIf(process.platform !== "linux")(
+  "imports a file beside a Unicode-equivalent excluded directory",
+  async () => {
+    const root = await createTestTempDirectory("rea-reference-unicode-kinds-");
+    await mkdir(join(root, "café"));
+    await writeFile(join(root, "cafe\u0301"), "retained file\n");
+    await writeFile(join(root, ".gitignore"), "café/\n");
+    const imported = await importTree(root);
+    if (!imported.ok) throw imported.error;
+    expect(imported.value.entries).toContainEqual(
+      expect.objectContaining({
+        path: "cafe\u0301",
+        kind: "file",
+        content_state: "hashed",
+      }),
+    );
+    expect(imported.value.exclusions).toContainEqual({
+      path: "café",
+      reason: "project-ignored",
+      pattern: "café/",
+      entry_kind: "directory",
+    });
+  },
+);
+
 describe("reference source symlink import", () => {
   it.each([
     { target: "dist", reason: "default-ignored", pattern: "dist/" },
     { target: "generated", reason: "project-ignored", pattern: "generated/" },
     { target: "cache", reason: "caller-excluded", pattern: "cache/" },
+    { target: "private", reason: "configured-secret", pattern: "private/" },
   ])(
     "retains links into a $reason directory without importing it",
     async ({ target, reason, pattern }) => {
@@ -113,16 +139,18 @@ describe("reference source symlink import", () => {
       const result = await importReferenceSource({
         root,
         caller: "reference-import-test",
-        policy: { secretPatterns: [] },
+        policy: {
+          secretPatterns: reason === "configured-secret" ? [pattern] : [],
+        },
         ...(reason === "caller-excluded" ? { excludePaths: [pattern] } : {}),
       });
       if (!result.ok) throw result.error;
       expect(result.value.inventory_state).toBe("partial");
       expect(result.value.exclusions).toContainEqual({
         path: target,
-        entry_kind: "directory",
         reason,
         pattern,
+        entry_kind: "directory",
       });
       expect(result.value.entries).toEqual(
         expect.arrayContaining([

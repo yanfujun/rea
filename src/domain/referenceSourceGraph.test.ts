@@ -458,6 +458,145 @@ describe("historical source graph validation", () => {
   });
 });
 
+describe("historical source exclusion applicability", () => {
+  it("keeps distinct filesystem spellings separate when checking exclusion kinds", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries = [fileEntry({ path: "cafe\u0301" })];
+    input.relationships = [];
+    input.exclusions = [
+      {
+        path: "café",
+        reason: "project-ignored",
+        pattern: "café/",
+        entry_kind: "directory",
+      },
+    ];
+    const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries[0]?.path).toBe("cafe\u0301");
+    expect(graph.exclusions[0]?.path).toBe("café");
+  });
+
+  it("rejects directory exclusion facts conflicting with an inventoried file", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [
+      {
+        path: "src/main.ts",
+        reason: "caller-excluded",
+        pattern: "src/main.ts",
+        entry_kind: "directory",
+      },
+    ];
+    input.entries[2] = symlinkEntry({ target: "main.ts/child" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /Directory exclusion conflicts/u,
+    );
+    input.exclusions = [
+      {
+        path: "src",
+        reason: "caller-excluded",
+        pattern: "src/",
+        entry_kind: "directory",
+      },
+    ];
+    input.entries[2] = symlinkEntry({ target: "unlisted.ts" });
+    expect(() => createHistoricalSourceGraph(input)).not.toThrow();
+    input.entries[0] = {
+      path: "src",
+      kind: "unknown",
+      classifications: ["unknown"],
+      limitations: ["Entry kind unavailable"],
+    };
+    expect(() => createHistoricalSourceGraph(input)).not.toThrow();
+  });
+
+  it("does not use a recorded escape to establish an internal target", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [{ path: "omitted", reason: "symlink-escape" }];
+    input.entries[2] = symlinkEntry({ target: "../omitted" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+    input.exclusions = [
+      {
+        path: "omitted",
+        reason: "caller-excluded",
+        pattern: "omitted/",
+        entry_kind: "directory",
+      },
+      { path: "omitted/link", reason: "symlink-escape" },
+    ];
+    input.entries[2] = symlinkEntry({ target: "../omitted/link/child" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+  });
+
+  it("requires directory coverage for descendants but reads legacy exact exclusions", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [
+      { path: "omitted", reason: "caller-excluded", pattern: "omitted/" },
+    ];
+    input.entries[2] = symlinkEntry({ target: "../omitted/child" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+    input.entries[2] = symlinkEntry({ target: "../omitted" });
+    const legacy = createHistoricalSourceGraph(input);
+    expect(parseHistoricalSourceGraph(legacy)).toEqual(legacy);
+    input.exclusions[0] = {
+      path: "omitted",
+      reason: "caller-excluded",
+      pattern: "omitted/",
+      entry_kind: "directory",
+    };
+    expect(createHistoricalSourceGraph(input).root_sha256).not.toBe(
+      legacy.root_sha256,
+    );
+  });
+
+  it("resolves excluded target paths with Unicode identity and directory boundaries", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [
+      {
+        path: "café",
+        reason: "caller-excluded",
+        pattern: "café/",
+        entry_kind: "directory",
+      },
+    ];
+    input.entries[2] = symlinkEntry({
+      target: "../cafe\u0301/nested/output.js",
+    });
+    const graph = createHistoricalSourceGraph(input);
+    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(graph.entries[2]).toMatchObject({
+      target: "../cafe\u0301/nested/output.js",
+      target_state: "internal",
+    });
+
+    // An exact recorded exclusion of unknown kind wins over a canonically
+    // equivalent directory spelling; it cannot prove subtree coverage.
+    input.exclusions.push({
+      path: "cafe\u0301",
+      reason: "caller-excluded",
+      pattern: "cafe\u0301",
+    });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+    input.exclusions.pop();
+
+    input.entries[2] = symlinkEntry({ target: "../café-other/output.js" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /must resolve to an inventoried entry/u,
+    );
+    input.entries[2] = symlinkEntry({ target: "../../café/output.js" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /must resolve to an inventoried entry/u,
+    );
+  });
+});
+
 describe("historical source graph excluded symlink targets", () => {
   it("retains internal symlinks into excluded trees without accepting sibling prefixes", () => {
     const input = { ...graphInput(), inventory_state: "partial" as const };

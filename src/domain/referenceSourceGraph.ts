@@ -329,45 +329,55 @@ const checkSymlinks = (
   context: z.RefinementCtx,
 ): void => {
   const lookupPath = createReferenceSourcePathLookup(paths);
+  const inventoryKinds = new Map(
+    graph.entries.map(({ path, kind }) => [path, kind]),
+  );
+  for (const [index, exclusion] of graph.exclusions.entries()) {
+    if (exclusion.entry_kind !== "directory") continue;
+    // Both records preserve filesystem spelling; Unicode equivalence does not
+    // establish that a distinct observed entry has the same filesystem identity.
+    const kind = inventoryKinds.get(exclusion.path);
+    if (kind !== undefined && kind !== "unknown" && kind !== "directory")
+      context.addIssue({
+        code: "custom",
+        message: "Directory exclusion conflicts with inventoried entry kind",
+        path: ["exclusions", index, "entry_kind"],
+      });
+  }
   const excludedPaths = createReferenceSourcePathLookup(
     graph.exclusions.map(({ path }) => path),
   );
   const excludedKinds = new Map<
     string,
-    Set<"file" | "directory" | "symlink" | "other" | "unknown" | undefined>
+    Set<GraphStructure["exclusions"][number]["entry_kind"]>
   >();
-  for (const { path, entry_kind } of graph.exclusions) {
-    const kinds = excludedKinds.get(path) ?? new Set();
-    kinds.add(entry_kind);
-    excludedKinds.set(path, kinds);
+  const escapePaths = new Set<string>();
+  for (const entry of graph.exclusions) {
+    const kinds = excludedKinds.get(entry.path) ?? new Set();
+    kinds.add(entry.entry_kind);
+    excludedKinds.set(entry.path, kinds);
+    if (entry.reason === "symlink-escape") escapePaths.add(entry.path);
   }
+  const coveredByExclusion = (resolved: string): boolean => {
+    if (graph.exclusions.length === 0) return false;
+    const prefixes = excludedPaths.resolvePrefixes(resolved);
+    if (prefixes === undefined || prefixes.length === 0) return false;
+    const exact = excludedPaths.resolve(resolved);
+    return prefixes.every((path) => {
+      if (escapePaths.has(path)) return false;
+      if (path === exact) return true;
+      const kinds = excludedKinds.get(path);
+      return kinds?.size === 1 && kinds.has("directory");
+    });
+  };
   for (const [index, entry] of graph.entries.entries()) {
-    if (entry.kind !== "symlink") continue;
-    if (entry.target === null) continue;
+    if (entry.kind !== "symlink" || entry.target === null) continue;
     const resolved = posix.normalize(
       posix.join(posix.dirname(entry.path), entry.target),
     );
     const escapesRoot = resolved.startsWith("../") || resolved === "..";
-    // The root is implicit; every other internal target needs an exact or
-    // uniquely Unicode-equivalent recorded inventory identity.
     const inventoried =
       resolved === "." || lookupPath.resolve(resolved) !== undefined;
-    const exactExcluded = excludedPaths.resolve(resolved);
-    let excluded = exactExcluded !== undefined;
-    for (
-      let candidate = posix.dirname(resolved);
-      candidate !== "." && candidate !== "/";
-      candidate = posix.dirname(candidate)
-    ) {
-      const excludedAncestor = excludedPaths.resolve(candidate);
-      if (excludedAncestor === undefined) continue;
-      const kinds = excludedKinds.get(excludedAncestor);
-      if (kinds?.size !== 1 || !kinds.has("directory")) {
-        excluded = false;
-        break;
-      }
-      excluded = true;
-    }
     const ownedRelativeTarget =
       !entry.target.startsWith("/") && !escapesRoot && inventoried;
     const absolute =
@@ -383,7 +393,7 @@ const checkSymlinks = (
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;
-    if (escapesRoot || (!inventoried && !excluded))
+    if (escapesRoot || (!inventoried && !coveredByExclusion(resolved)))
       context.addIssue({
         code: "custom",
         message:
